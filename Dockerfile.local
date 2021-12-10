@@ -1,0 +1,97 @@
+# Install required packages
+FROM ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+
+# install curl and git
+RUN apt-get install -y curl git
+
+# install apache
+RUN apt-get install -y apache2
+
+RUN apt-get update
+
+RUN apt-get install -y software-properties-common
+
+RUN LC_ALL=C.UTF-8
+
+RUN apt-get install --reinstall ca-certificates
+
+RUN apt update
+RUN apt install -y php php-cli php-fpm php-dev php-json php-common php-mysql php-zip php-gd php-mbstring php-curl php-xml php-pear php-bcmath
+
+# install pre requisites
+RUN apt-get update && \
+	apt-get install -y apt-transport-https
+
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+RUN curl https://packages.microsoft.com/config/ubuntu/20.04/prod.list > /etc/apt/sources.list.d/mssql-release.list
+
+RUN apt-get update
+RUN ACCEPT_EULA=Y apt-get install -y msodbcsql17
+RUN apt-get install -y unixodbc-dev
+
+RUN apt-get update && \
+	apt-get install php-pear
+
+# RUN pecl install sqlsrv-5.8.0
+RUN pecl install sqlsrv
+#RUN pecl install pdo_sqlsrv-5.8.0
+RUN pecl install pdo_sqlsrv
+RUN echo "extension=pdo_sqlsrv.so" >> /etc/php/7.4/apache2/php.ini
+RUN echo "extension=sqlsrv.so" >> /etc/php/7.4/apache2/php.ini
+
+RUN echo "extension=/usr/lib/php/20190902/sqlsrv.so" >> /etc/php/7.4/apache2/php.ini
+RUN echo "extension=/usr/lib/php/20190902/pdo_sqlsrv.so" >> /etc/php/7.4/apache2/php.ini
+
+RUN printf "; priority=20\nextension=sqlsrv.so\n" > /etc/php/7.4/mods-available/sqlsrv.ini
+RUN printf "; priority=30\nextension=pdo_sqlsrv.so\n" > /etc/php/7.4/mods-available/pdo_sqlsrv.ini
+RUN phpenmod -v 7.4 sqlsrv pdo_sqlsrv
+
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+#RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+#RUN php -r "if (hash_file('sha384', 'composer-setup.php') === '756890a4488ce9024fc62c56153228907f1545c228516cbf63f885e036d37e9a59d27d63f46af1d4d07ee0f76181c7d3') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); } echo PHP_EOL;"
+#RUN php composer-setup.php
+#RUN php -r "unlink('composer-setup.php');"
+#RUN mv composer.phar /usr/local/bin/composer
+
+RUN apt-get install -y locales && echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
+
+EXPOSE 80 9001
+
+WORKDIR /var/www/html/
+
+#specific for vhost local
+COPY ./vhost.conf.local /etc/apache2/sites-available/000-default.conf
+
+RUN chown -R www-data:www-data /var/www/html \
+    && a2enmod rewrite \
+    && a2enmod headers
+
+# install additional utilities
+RUN apt-get update && apt-get install gettext nano vim supervisor -y
+
+RUN apt-get update \
+	&& apt-get install -y cron \
+	&& apt-get install -y rsyslog \
+	&& apt-get install -y dos2unix
+
+RUN touch /var/log/webpos-cron.log
+
+#RUN printf '* * * * * cd /var/www/html && php artisan schedule:run >> /dev/null 2>&1\n#' >> /etc/cron.d/webpos-cron
+RUN printf '* * * * * cd /var/www/html && php artisan schedule:run >> /var/www/html/storage/logs/cron.log 2>&1\n#' >> /etc/cron.d/webpos-cron
+
+RUN crontab /etc/cron.d/webpos-cron
+
+CMD php artisan config:clear
+CMD php artisan route:clear
+CMD php artisan cache:clear
+#CMD php artisan config:cache
+CMD php artisan storage:link
+
+
+# Add files
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+CMD ["supervisord", "--nodaemon", "--configuration", "/etc/supervisor/conf.d/supervisord.conf"]
